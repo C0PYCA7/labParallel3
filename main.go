@@ -9,8 +9,8 @@ import (
 
 func main() {
 	//withLock(3, 5)
-	//withSemaphore(10, 5)
-	withAtomic(10, 5)
+	withSemaphore(5, 5)
+	//withAtomic(10, 5)
 	//withoutSync(3, 5)
 }
 
@@ -43,8 +43,9 @@ var writerDone = make(chan struct{})
 var readerDone = make(chan struct{})
 var writeLock int32
 var readLock int32
-var writeSemaphore sync.Mutex
-var readSemaphore sync.Mutex
+
+var writeSemaphore = &sync.Mutex{}
+var readSemaphore = &sync.Mutex{}
 var wg sync.WaitGroup
 var writerTurn bool
 
@@ -65,40 +66,41 @@ func readerFirst(id int) {
 }
 
 func writerSecond(id int, message string) {
+	writeSemaphore.Lock()
 	fmt.Printf("Writer %d is writing: %s\n", id, message)
-	writeSemaphore.Lock() // Захватываем семафор для записи
 	buffer = message
-	wg.Done()
-	writeSemaphore.Unlock() // Освобождаем семафор для записи
+	writeSemaphore.Unlock()
+	writerDone <- struct{}{}
 }
 
 func readerSecond(id int) {
-	readSemaphore.Lock() // Захватываем семафор для чтения
+	<-writerDone
+	readSemaphore.Lock()
 	fmt.Printf("Reader %d is reading: %s\n", id, buffer)
-	readSemaphore.Unlock() // Освобождаем семафор для чтения
-	wg.Done()
+	readSemaphore.Unlock()
+	readerDone <- struct{}{}
 }
 
 func withSemaphore(n, m int) {
+	t := time.Now()
 	numWriters := n
 	numReaders := m
 
-	wg.Add(numWriters + numReaders)
-
 	for i := 0; i < numWriters; i++ {
 		message := fmt.Sprintf("Message from Writer %d", i+1)
-		go writerSecond(i+1, message)
+		go writerFirst(i+1, message)
 	}
-
-	// Инициализируем семафор для чтения, чтобы позволить первому писателю начать запись
-	readSemaphore.Unlock()
 
 	for i := 0; i < numReaders; i++ {
-		go readerSecond(i + 1)
+		go readerFirst(i + 1)
 	}
 
-	wg.Wait()
+	for i := 0; i < numWriters; i++ {
+		<-readerDone
+	}
+
 	fmt.Println("All readers have finished.")
+	fmt.Println(time.Since(t))
 }
 
 func writerThird(id int, message string) {
